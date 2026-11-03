@@ -154,7 +154,15 @@ public final class GoldShop extends JavaPlugin implements Listener {
             getLogger().info("NuVotifier hook enabled.");
         }catch(Exception ex){getLogger().warning("NuVotifier API not found; vote rewards disabled.");}
     }
-    private void startPlaytimeCounter(){new BukkitRunnable(){public void run(){for(Player p:Bukkit.getOnlinePlayers())progress(p,"PLAYTIME",1);}}.runTaskTimer(this,1200L,1200L);}
+    private void startPlaytimeCounter() {
+    new BukkitRunnable() {
+        public void run() {
+            for (Player p : Bukkit.getOnlinePlayers()) {
+                progress(p, "PLAYTIME", 1);
+            }
+        }
+    }.runTaskTimer(GoldShop.this, 1200L, 1200L);
+}
     @EventHandler public void join(PlayerJoinEvent e){progress(e.getPlayer(),"JOIN",1);}
     @EventHandler public void kill(EntityDeathEvent e){Player p=e.getEntity().getKiller();if(p!=null)progress(p,"KILL",1);}
     @EventHandler public void click(InventoryClickEvent e){
