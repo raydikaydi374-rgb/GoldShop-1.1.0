@@ -1,0 +1,7 @@
+language:
+  prompt: "&eChoose language: &a[العربية] &7or &b[English]"
+  saved: "&aLanguage saved."
+  help-title: "&6GoldShop Help"
+  no-permission: "&cYou do not have permission."
+  reload: "&aGoldShop configuration reloaded."
+  invalid: "&cInvalid command. Use /goldshop help."

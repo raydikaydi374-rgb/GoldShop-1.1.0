@@ -1,0 +1,80 @@
+currency:
+  name: Gold
+  symbol: "&6✦"
+menu:
+  title: "&6&lGoldShop"
+  size: 27
+  filler:
+    enabled: false
+    material: BLACK_STAINED_GLASS_PANE
+    name: " "
+categories:
+  crate-keys:
+    name: "&eCrate Keys"
+    material: TRIPWIRE_HOOK
+    slot: 11
+  ranks:
+    name: "&bRanks"
+    material: NAME_TAG
+    slot: 15
+products:
+  crate-keys:
+    common-key:
+      name: "&aCommon Key"
+      material: TRIPWIRE_HOOK
+      price: 100
+      slot: 10
+      lore: ["&7A common crate key"]
+      commands: ["crate key give {player} common 1"]
+  ranks:
+    vip:
+      name: "&aVIP Rank"
+      material: EMERALD
+      price: 500
+      slot: 10
+      commands: ["lp user {player} parent add vip"]
+command-items:
+  playtime:
+    name: "&bPlayTime"
+    material: CLOCK
+    slot: 13
+    lore: ["&7Open the playtime menu"]
+    commands: ["playtime"]
+    executor: PLAYER
+    permission: ""
+    cooldown-seconds: 3
+missions:
+  enabled: true
+  menu-title: "&6&lGold Missions"
+  reward-currency: Gold
+  entries:
+    first-join:
+      name: "&aWelcome"
+      description: "&7Join the server once"
+      type: JOIN
+      target: 1
+      reward: 25
+      enabled: true
+      repeatable: false
+    mob-hunter:
+      name: "&cMob Hunter"
+      description: "&7Defeat 10 monsters"
+      type: KILL
+      target: 10
+      reward: 50
+      enabled: true
+      repeatable: false
+    play-30:
+      name: "&bPlay for 30 minutes"
+      description: "&7Spend time on the server"
+      type: PLAYTIME
+      target: 30
+      reward: 75
+      enabled: true
+      repeatable: false
+voting:
+  enabled: true
+  reward: 5
+  cooldown-hours: 24
+messages:
+  prefix: "&6GoldShop &8» "

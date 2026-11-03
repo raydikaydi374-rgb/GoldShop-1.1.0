@@ -1,0 +1,22 @@
+name: GoldShop
+version: 1.1.0
+main: com.goldshop.GoldShop
+api-version: '1.21'
+author: GoldShop
+description: Configurable Gold currency, shop, missions and command menus
+softdepend: [PlaceholderAPI, NuVotifier]
+commands:
+  goldshop:
+    description: Open GoldShop or show help
+    usage: /goldshop [help|reload|admin]
+    aliases: [gs]
+  gold:
+    description: Gold balance and administration
+    usage: /gold [give|take|set|rename] [player] [amount]
+  goldmissions:
+    description: Open Gold missions
+    aliases: [missions]
+permissions:
+  goldshop.admin:
+    description: Manage GoldShop, balances, products and missions
+    default: op

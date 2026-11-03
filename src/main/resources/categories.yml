@@ -1,0 +1,3 @@
+# Category definitions can also be edited in config.yml under categories.
+# This file is reserved for future independent category migration.
+categories: {}
