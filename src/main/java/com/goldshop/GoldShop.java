@@ -4,17 +4,19 @@ import me.clip.placeholderapi.expansion.PlaceholderExpansion;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Material;
-import org.bukkit.command.*;
+import org.bukkit.OfflinePlayer;
+import org.bukkit.command.Command;
+import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
-import org.bukkit.event.*;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDeathEvent;
 import org.bukkit.event.inventory.InventoryClickEvent;
-import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
-import org.bukkit.event.player.PlayerQuitEvent;
-import org.bukkit.inventory.*;
+import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
@@ -25,59 +27,42 @@ import java.util.*;
 
 public final class GoldShop extends JavaPlugin implements Listener {
 
-    private YamlConfiguration balances, playerData, messages;
-    private File balancesFile, playerDataFile, messagesFile;
+    private YamlConfiguration balances;
+    private YamlConfiguration playerData;
+    private File balancesFile;
+    private File playerDataFile;
 
-    private final Map<UUID,String> language = new HashMap<>();
-    private final Map<UUID,String> menuMode = new HashMap<>();
-    private final Map<UUID,String> menuCategory = new HashMap<>();
-    private final Map<String,Long> commandCooldowns = new HashMap<>();
-    private final Map<UUID,Map<Integer,String>> productSlots = new HashMap<>();
+    private final Map<UUID, String> menuModes = new HashMap<>();
+    private final Map<UUID, String> menuCategories = new HashMap<>();
+    private final Map<UUID, Long> cooldowns = new HashMap<>();
 
     @Override
     public void onEnable() {
-
         saveDefaultConfig();
 
-        saveResourceIfMissing("messages.yml");
-        saveResourceIfMissing("categories.yml");
-        saveResourceIfMissing("shops.yml");
+        if (!getDataFolder().exists()) {
+            getDataFolder().mkdirs();
+        }
 
-        balancesFile = dataFile("balances.yml");
-        playerDataFile = dataFile("players.yml");
-        messagesFile = dataFile("messages.yml");
+        balancesFile = new File(getDataFolder(), "balances.yml");
+        playerDataFile = new File(getDataFolder(), "players.yml");
 
         balances = YamlConfiguration.loadConfiguration(balancesFile);
         playerData = YamlConfiguration.loadConfiguration(playerDataFile);
-        messages = YamlConfiguration.loadConfiguration(messagesFile);
 
-        if (getCommand("goldshop") == null ||
-            getCommand("gold") == null ||
-            getCommand("goldmissions") == null) {
+        Objects.requireNonNull(getCommand("goldshop")).setExecutor(this);
+        Objects.requireNonNull(getCommand("gold")).setExecutor(this);
+        Objects.requireNonNull(getCommand("goldmissions")).setExecutor(this);
 
-            getLogger().severe(
-                "A required command is missing from plugin.yml. Disabling GoldShop."
-            );
-
-            Bukkit.getPluginManager().disablePlugin(this);
-            return;
-        }
-
-        getCommand("goldshop").setExecutor(this);
-        getCommand("gold").setExecutor(this);
-        getCommand("goldmissions").setExecutor(this);
-
-        Bukkit.getPluginManager().registerEvents(this,this);
+        Bukkit.getPluginManager().registerEvents(this, this);
 
         startPlaytimeCounter();
-        registerVoteHook();
 
         if (Bukkit.getPluginManager().getPlugin("PlaceholderAPI") != null) {
             new GoldExpansion(this).register();
-            getLogger().info("PlaceholderAPI expansion registered.");
         }
 
-        getLogger().info("GoldShop 1.1.0 enabled.");
+        getLogger().info("GoldShop 1.1.0 enabled!");
     }
 
     @Override
@@ -85,641 +70,558 @@ public final class GoldShop extends JavaPlugin implements Listener {
         saveAll();
     }
 
-    private File dataFile(String n) {
-        return new File(getDataFolder(),n);
-    }
-
-    private void saveResourceIfMissing(String n) {
-
-        File file = new File(getDataFolder(), n);
-
-        if (file.exists()) return;
-
-        try {
-            saveResource(n, false);
-        } catch (IllegalArgumentException ex) {
-            getLogger().warning(
-                "Optional resource " + n + " was not found in the plugin JAR."
-            );
-        }
-    }
-
     private void saveAll() {
-        save(balances,balancesFile);
-        save(playerData,playerDataFile);
+        saveYaml(balances, balancesFile);
+        saveYaml(playerData, playerDataFile);
     }
 
-    private void save(YamlConfiguration y,File f) {
+    private void saveYaml(YamlConfiguration yaml, File file) {
         try {
-            y.save(f);
+            yaml.save(file);
         } catch (IOException e) {
-            getLogger().severe("Save failed: "+e.getMessage());
+            getLogger().severe("Could not save " + file.getName());
+            e.printStackTrace();
         }
     }
 
-    private String c(String s) {
-        return ChatColor.translateAlternateColorCodes('&',s==null?"":s);
+    private String color(String text) {
+        return ChatColor.translateAlternateColorCodes('&', text == null ? "" : text);
     }
 
-    private void msg(CommandSender s,String key) {
-
-        String prefix = messages.getString(
-            "messages.prefix","&6GoldShop &8» "
-        );
-
-        String message = messages.getString(
-            "messages."+key,"&c"+key
-        );
-
-        s.sendMessage(c(prefix+message));
+    private String currency() {
+        return getConfig().getString("currency.name", "Gold");
     }
 
-    private String cur() {
-        return getConfig().getString("currency.name","Gold");
+    private String format(double amount) {
+        if (amount == Math.floor(amount)) {
+            return Long.toString((long) amount);
+        }
+        return String.format(Locale.US, "%.2f", amount);
     }
 
-    private String fmt(double n) {
-        return n==Math.floor(n)
-            ? Long.toString((long)n)
-            : String.format(Locale.US,"%.2f",n);
+    public double getGold(UUID uuid) {
+        return balances.getDouble(uuid.toString(), 0);
     }
 
-    public double getGold(UUID id) {
-        return balances.getDouble(id.toString(),0);
+    private void setGold(UUID uuid, double amount) {
+        balances.set(uuid.toString(), Math.max(0, amount));
+        saveYaml(balances, balancesFile);
     }
 
-    private void setGold(UUID id,double v) {
-        balances.set(id.toString(),Math.max(0,v));
-        save(balances,balancesFile);
-    }
-
-    private ItemStack item(String mat,String name,List<String> lore) {
-
-        Material m;
-
+    private ItemStack createItem(String material, String name, List<String> lore) {
+        Material type;
         try {
-            m = Material.valueOf(mat.toUpperCase(Locale.ROOT));
-        } catch(Exception e) {
-            m = Material.PAPER;
+            type = Material.valueOf(material.toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            type = Material.PAPER;
         }
 
-        ItemStack it = new ItemStack(m);
-        ItemMeta im = it.getItemMeta();
+        ItemStack item = new ItemStack(type);
+        ItemMeta meta = item.getItemMeta();
 
-        if(im!=null) {
-            im.setDisplayName(c(name));
-            im.setLore(lore.stream().map(this::c).toList());
-            it.setItemMeta(im);
+        if (meta != null) {
+            meta.setDisplayName(color(name));
+            List<String> coloredLore = new ArrayList<>();
+            for (String line : lore) {
+                coloredLore.add(color(line));
+            }
+            meta.setLore(coloredLore);
+            item.setItemMeta(meta);
         }
 
-        return it;
+        return item;
     }
 
-    private Inventory menu(String title,int size,String mode,Player p) {
-
-        Inventory inv = Bukkit.createInventory(null,size,c(title));
-
-        menuMode.put(p.getUniqueId(),mode);
-
-        return inv;
+    private Inventory createMenu(Player player, String title, int size, String mode) {
+        menuModes.put(player.getUniqueId(), mode);
+        return Bukkit.createInventory(null, size, color(title));
     }
 
-    private void openShop(Player p) {
+    private void openShop(Player player) {
+        int size = getConfig().getInt("menu.size", 27);
+        if (size < 9 || size > 54 || size % 9 != 0) {
+            size = 27;
+        }
 
-        int size = getConfig().getInt("menu.size",27);
-
-        if(size<9 || size>54 || size%9!=0) size=27;
-
-        Inventory inv = menu(
-            getConfig().getString("menu.title","&6&lGoldShop"),
-            size,
-            "shop",
-            p
+        Inventory inventory = createMenu(
+                player,
+                getConfig().getString("menu.title", "&6&lGoldShop"),
+                size,
+                "shop"
         );
 
-        if(getConfig().getBoolean("menu.filler.enabled",false)) {
+        ConfigurationSection categories =
+                getConfig().getConfigurationSection("categories");
 
-            ItemStack fill = item(
-                getConfig().getString(
-                    "menu.filler.material",
-                    "BLACK_STAINED_GLASS_PANE"
-                ),
-                getConfig().getString("menu.filler.name"," "),
-                List.of()
-            );
+        if (categories != null) {
+            for (String id : categories.getKeys(false)) {
+                ConfigurationSection section =
+                        categories.getConfigurationSection(id);
 
-            for(int i=0;i<size;i++) {
-                inv.setItem(i,fill);
-            }
-        }
+                if (section == null) continue;
 
-        ConfigurationSection cats =
-            getConfig().getConfigurationSection("categories");
+                int slot = section.getInt("slot", -1);
 
-        if(cats!=null) {
-
-            for(String id:cats.getKeys(false)) {
-
-                ConfigurationSection s = cats.getConfigurationSection(id);
-
-                if(s==null) continue;
-
-                int slot = s.getInt("slot",-1);
-
-                if(slot>=0 && slot<size) {
-
-                    inv.setItem(
-                        slot,
-                        item(
-                            s.getString("material","CHEST"),
-                            s.getString("name",id),
+                if (slot >= 0 && slot < size) {
+                    inventory.setItem(slot, createItem(
+                            section.getString("material", "CHEST"),
+                            section.getString("name", id),
                             List.of("&eClick to open")
-                        )
-                    );
+                    ));
                 }
             }
         }
 
-        int balanceSlot = getConfig().getInt("menu.balance-slot",22);
+        int balanceSlot = getConfig().getInt("menu.balance-slot", 22);
 
-        if(balanceSlot>=0 && balanceSlot<size) {
-
-            inv.setItem(
-                balanceSlot,
-                item(
+        if (balanceSlot >= 0 && balanceSlot < size) {
+            inventory.setItem(balanceSlot, createItem(
                     "GOLD_INGOT",
-                    "&6"+cur()+": &f"+fmt(getGold(p.getUniqueId())),
+                    "&6" + currency() + ": &f" +
+                            format(getGold(player.getUniqueId())),
                     List.of("&7Your balance")
-                )
-            );
+            ));
         }
 
-        int missionSlot = getConfig().getInt("menu.missions-slot",-1);
+        int missionSlot = getConfig().getInt("menu.missions-slot", -1);
 
-        if(missionSlot>=0 && missionSlot<size) {
-
-            inv.setItem(
-                missionSlot,
-                item(
+        if (missionSlot >= 0 && missionSlot < size) {
+            inventory.setItem(missionSlot, createItem(
                     "BOOK",
                     "&eMissions",
                     List.of("&7Click to view missions")
-                )
-            );
+            ));
         }
 
-        ConfigurationSection cmdItems =
-            getConfig().getConfigurationSection("command-items");
-
-        if(cmdItems!=null) {
-
-            for(String id:cmdItems.getKeys(false)) {
-
-                ConfigurationSection s =
-                    cmdItems.getConfigurationSection(id);
-
-                if(s==null) continue;
-
-                int slot = s.getInt("slot",-1);
-
-                if(slot>=0 && slot<size) {
-
-                    inv.setItem(
-                        slot,
-                        item(
-                            s.getString("material","PAPER"),
-                            s.getString("name",id),
-                            s.getStringList("lore")
-                        )
-                    );
-                }
-            }
-        }
-
-        p.openInventory(inv);
+        player.openInventory(inventory);
     }
 
-    private void openProducts(Player p,String cat) {
+    private void openProducts(Player player, String category) {
+        ConfigurationSection products =
+                getConfig().getConfigurationSection("products." + category);
 
-        ConfigurationSection sec =
-            getConfig().getConfigurationSection("products."+cat);
-
-        if(sec==null) {
-            p.sendMessage(c("&cNo products configured."));
+        if (products == null) {
+            player.sendMessage(color("&cNo products configured."));
             return;
         }
 
-        Inventory inv = menu(
-            "&8GoldShop &7» "+cat,
-            54,
-            "products",
-            p
+        Inventory inventory = createMenu(
+                player,
+                "&8GoldShop &7» " + category,
+                54,
+                "products"
         );
 
-        menuCategory.put(p.getUniqueId(),cat);
+        menuCategories.put(player.getUniqueId(), category);
 
-        Map<Integer,String> slots = new HashMap<>();
+        int slot = 0;
 
-        for(String id:sec.getKeys(false)) {
+        for (String id : products.getKeys(false)) {
+            ConfigurationSection product =
+                    products.getConfigurationSection(id);
 
-            ConfigurationSection pr = sec.getConfigurationSection(id);
+            if (product == null) continue;
 
-            if(pr==null) continue;
+            int configuredSlot = product.getInt("slot", -1);
 
-            int slot = pr.getInt("slot",-1);
-
-            if(slot<0) {
-                slot=0;
-
-                while(slot<45 && inv.getItem(slot)!=null) {
+            if (configuredSlot < 0) {
+                while (slot < 45 && inventory.getItem(slot) != null) {
                     slot++;
                 }
+                configuredSlot = slot;
             }
 
-            if(slot>=0 && slot<45 && !slots.containsKey(slot)) {
+            if (configuredSlot >= 0 && configuredSlot < 45) {
+                double price = product.getDouble("price", 0);
 
-                inv.setItem(
-                    slot,
-                    item(
-                        pr.getString("material","CHEST"),
-                        pr.getString("name",id),
-                        combine(
-                            pr.getStringList("lore"),
-                            List.of(
-                                "&7Price: &6"+
-                                fmt(pr.getDouble("price"))+" "+cur(),
-                                "&eClick to purchase"
-                            )
-                        )
-                    )
+                List<String> lore = new ArrayList<>(
+                        product.getStringList("lore")
                 );
 
-                slots.put(slot,id);
+                lore.add("&7Price: &6" + format(price) + " " + currency());
+                lore.add("&eClick to purchase");
+
+                inventory.setItem(configuredSlot, createItem(
+                        product.getString("material", "CHEST"),
+                        product.getString("name", id),
+                        lore
+                ));
             }
+
+            slot++;
         }
 
-        productSlots.put(p.getUniqueId(),slots);
+        inventory.setItem(49, createItem(
+                "ARROW",
+                "&cBack",
+                List.of("&7Return to shop")
+        ));
 
-        inv.setItem(
-            49,
-            item("ARROW","&cBack",List.of())
-        );
-
-        p.openInventory(inv);
+        player.openInventory(inventory);
     }
 
-    private List<String> combine(List<String> a,List<String> b) {
-
-        List<String> r = new ArrayList<>(a);
-
-        r.addAll(b);
-
-        return r;
-    }
-
-    private void openMissions(Player p) {
-
-        if(!getConfig().getBoolean("missions.enabled",true)) {
-            p.sendMessage(c("&cMissions are disabled."));
+    private void openMissions(Player player) {
+        if (!getConfig().getBoolean("missions.enabled", true)) {
+            player.sendMessage(color("&cMissions are disabled."));
             return;
         }
 
-        ConfigurationSection all =
-            getConfig().getConfigurationSection("missions.entries");
-
-        Inventory inv = menu(
-            getConfig().getString(
-                "missions.menu-title",
-                "&6&lGold Missions"
-            ),
-            54,
-            "missions",
-            p
+        Inventory inventory = createMenu(
+                player,
+                getConfig().getString("missions.menu-title", "&6Gold Missions"),
+                54,
+                "missions"
         );
 
-        if(all!=null) {
+        ConfigurationSection missions =
+                getConfig().getConfigurationSection("missions.entries");
 
-            int slot=0;
+        if (missions != null) {
+            int slot = 0;
 
-            for(String id:all.getKeys(false)) {
+            for (String id : missions.getKeys(false)) {
+                if (slot >= 45) break;
 
-                ConfigurationSection m = all.getConfigurationSection(id);
+                ConfigurationSection mission =
+                        missions.getConfigurationSection(id);
 
-                if(m==null ||
-                   !m.getBoolean("enabled",true) ||
-                   slot>=45) continue;
+                if (mission == null ||
+                        !mission.getBoolean("enabled", true)) {
+                    continue;
+                }
 
-                int target = Math.max(1,m.getInt("target",1));
+                String path = player.getUniqueId() + ".missions." + id;
 
-                int progress = playerData.getInt(
-                    p.getUniqueId()+".missions."+id+".progress",
-                    0
-                );
-
+                int progress = playerData.getInt(path + ".progress", 0);
+                int target = Math.max(1, mission.getInt("target", 1));
                 boolean claimed = playerData.getBoolean(
-                    p.getUniqueId()+".missions."+id+".claimed",
-                    false
+                        path + ".claimed", false
                 );
 
-                String status =
-                    (claimed && !m.getBoolean("repeatable",false))
-                    ? "&aClaimed"
-                    : progress>=target
-                    ? "&eComplete - click to claim"
-                    : "&7Progress: &f"+Math.min(progress,target)+"/"+target;
+                String status;
 
-                inv.setItem(
-                    slot++,
-                    item(
-                        progress>=target?"EMERALD":"BOOK",
-                        m.getString("name",id),
+                if (claimed && !mission.getBoolean("repeatable", false)) {
+                    status = "&aClaimed";
+                } else if (progress >= target) {
+                    status = "&eComplete - click to claim";
+                } else {
+                    status = "&7Progress: &f" +
+                            Math.min(progress, target) + "/" + target;
+                }
+
+                inventory.setItem(slot++, createItem(
+                        progress >= target ? "EMERALD" : "BOOK",
+                        mission.getString("name", id),
                         List.of(
-                            m.getString("description",""),
-                            "&6Reward: "+m.getDouble("reward")+" "+cur(),
-                            status
+                                mission.getString("description", ""),
+                                "&6Reward: " +
+                                        format(mission.getDouble("reward", 0))
+                                        + " " + currency(),
+                                status
                         )
-                    )
-                );
+                ));
             }
         }
 
-        p.openInventory(inv);
+        player.openInventory(inventory);
     }
 
-    private void progress(Player p,String type,int amount) {
+    private void addProgress(Player player, String type, int amount) {
+        ConfigurationSection missions =
+                getConfig().getConfigurationSection("missions.entries");
 
-        ConfigurationSection all =
-            getConfig().getConfigurationSection("missions.entries");
+        if (missions == null) return;
 
-        if(all==null) return;
+        for (String id : missions.getKeys(false)) {
+            ConfigurationSection mission =
+                    missions.getConfigurationSection(id);
 
-        for(String id:all.getKeys(false)) {
+            if (mission == null ||
+                    !mission.getBoolean("enabled", true) ||
+                    !mission.getString("type", "")
+                            .equalsIgnoreCase(type)) {
+                continue;
+            }
 
-            ConfigurationSection m = all.getConfigurationSection(id);
+            String path = player.getUniqueId() + ".missions." + id;
 
-            if(m==null ||
-               !m.getBoolean("enabled",true) ||
-               !m.getString("type","").equalsIgnoreCase(type)) continue;
+            if (playerData.getBoolean(path + ".claimed", false) &&
+                    !mission.getBoolean("repeatable", false)) {
+                continue;
+            }
 
-            String path = p.getUniqueId()+".missions."+id;
-
-            if(playerData.getBoolean(path+".claimed",false) &&
-               !m.getBoolean("repeatable",false)) continue;
-
-            int target = Math.max(1,m.getInt("target",1));
-
-            int current = playerData.getInt(path+".progress",0);
+            int current = playerData.getInt(path + ".progress", 0);
+            int target = Math.max(1, mission.getInt("target", 1));
 
             playerData.set(
-                path+".progress",
-                Math.min(target,current+Math.max(0,amount))
+                    path + ".progress",
+                    Math.min(target, current + amount)
             );
         }
 
-        save(playerData,playerDataFile);
-    }
-
-    private void registerVoteHook() {
-
-        if(!getConfig().getBoolean("voting.enabled",true) ||
-           Bukkit.getPluginManager().getPlugin("NuVotifier")==null) return;
-
-        try {
-
-            Class<?> eventClass = Class.forName(
-                "com.vexsoftware.votifier.model.VotifierEvent"
-            );
-
-            Bukkit.getPluginManager().registerEvent(
-                (Class)eventClass,
-                this,
-                EventPriority.NORMAL,
-                (listener,event)-> {
-
-                    try {
-
-                        Object vote = eventClass
-                            .getMethod("getVote")
-                            .invoke(event);
-
-                        String username = String.valueOf(
-                            vote.getClass()
-                                .getMethod("getUsername")
-                                .invoke(vote)
-                        );
-
-                        Player target = Bukkit.getPlayerExact(username);
-
-                        if(target==null) return;
-
-                        long hours = getConfig().getLong(
-                            "voting.cooldown-hours",
-                            24
-                        );
-
-                        String path =
-                            target.getUniqueId()+".last-vote";
-
-                        long now = System.currentTimeMillis();
-
-                        if(now-playerData.getLong(path,0)
-                           <hours*3600000L) return;
-
-                        double reward = getConfig().getDouble(
-                            "voting.reward",
-                            5
-                        );
-
-                        setGold(
-                            target.getUniqueId(),
-                            getGold(target.getUniqueId())+reward
-                        );
-
-                        playerData.set(path,now);
-
-                        save(playerData,playerDataFile);
-
-                        progress(target,"VOTE",1);
-
-                        target.sendMessage(
-                            c("&aVote reward: &6+"+
-                              fmt(reward)+" "+cur())
-                        );
-
-                    } catch(Exception ex) {
-
-                        getLogger().warning(
-                            "Could not process vote event: "+ex.getMessage()
-                        );
-                    }
-
-                },
-                this
-            );
-
-            getLogger().info("NuVotifier hook enabled.");
-
-        } catch(Exception ex) {
-
-            getLogger().warning(
-                "NuVotifier API not found; vote rewards disabled."
-            );
-        }
+        saveYaml(playerData, playerDataFile);
     }
 
     private void startPlaytimeCounter() {
-
         new BukkitRunnable() {
-
+            @Override
             public void run() {
-
-                for(Player p:Bukkit.getOnlinePlayers()) {
-
-                    progress(p,"PLAYTIME",1);
+                for (Player player : Bukkit.getOnlinePlayers()) {
+                    addProgress(player, "PLAYTIME", 1);
                 }
             }
-
-        }.runTaskTimer(this,1200L,1200L);
+        }.runTaskTimer(this, 1200L, 1200L);
     }
 
     @EventHandler
-    public void join(PlayerJoinEvent e) {
-        progress(e.getPlayer(),"JOIN",1);
+    public void onJoin(PlayerJoinEvent event) {
+        addProgress(event.getPlayer(), "JOIN", 1);
     }
 
     @EventHandler
-    public void kill(EntityDeathEvent e) {
+    public void onKill(EntityDeathEvent event) {
+        Player killer = event.getEntity().getKiller();
 
-        Player p = e.getEntity().getKiller();
-
-        if(p!=null) {
-            progress(p,"KILL",1);
+        if (killer != null) {
+            addProgress(killer, "KILL", 1);
         }
     }
 
     @EventHandler
-    public void closeMenu(InventoryCloseEvent e) {
+    public void onInventoryClick(InventoryClickEvent event) {
+        if (!(event.getWhoClicked() instanceof Player player)) return;
 
-        UUID id = e.getPlayer().getUniqueId();
+        UUID uuid = player.getUniqueId();
 
-        if(!(e.getPlayer() instanceof Player player)) return;
+        if (!menuModes.containsKey(uuid)) return;
 
-        Bukkit.getScheduler().runTask(this,()-> {
+        if (event.getClickedInventory() == null ||
+                event.getClickedInventory() !=
+                        event.getView().getTopInventory()) {
+            return;
+        }
 
-            if(!player.isOnline()) return;
+        event.setCancelled(true);
 
-            if(player.getOpenInventory()
-               .getTopInventory()
-               .equals(e.getInventory())) {
+        int slot = event.getRawSlot();
+        String mode = menuModes.get(uuid);
 
-                menuMode.remove(id);
-                menuCategory.remove(id);
-                productSlots.remove(id);
-            }
-        });
-    }
-
-    @EventHandler
-    public void quit(PlayerQuitEvent e) {
-
-        UUID id = e.getPlayer().getUniqueId();
-
-        menuMode.remove(id);
-        menuCategory.remove(id);
-        productSlots.remove(id);
-
-        commandCooldowns.keySet().removeIf(
-            key->key.startsWith(id.toString()+":")
-        );
-    }
-
-    @EventHandler
-    public void click(InventoryClickEvent e) {
-
-        if(!(e.getWhoClicked() instanceof Player p) ||
-           !menuMode.containsKey(p.getUniqueId())) return;
-
-        if(e.getClickedInventory()==null ||
-           e.getClickedInventory()!=e.getView().getTopInventory()) return;
-
-        e.setCancelled(true);
-
-        int slot = e.getRawSlot();
-
-        String mode = menuMode.get(p.getUniqueId());
-
-        if(mode.equals("shop")) {
-
-            if(slot>=0 && slot<e.getInventory().getSize()) {
-
-                ConfigurationSection cats =
+        if ("shop".equals(mode)) {
+            ConfigurationSection categories =
                     getConfig().getConfigurationSection("categories");
 
-                if(cats!=null) {
+            if (categories != null) {
+                for (String id : categories.getKeys(false)) {
+                    ConfigurationSection section =
+                            categories.getConfigurationSection(id);
 
-                    for(String id:cats.getKeys(false)) {
-
-                        ConfigurationSection s =
-                            cats.getConfigurationSection(id);
-
-                        if(s!=null && s.getInt("slot",-1)==slot) {
-                            openProducts(p,id);
-                            return;
-                        }
+                    if (section != null &&
+                            section.getInt("slot", -1) == slot) {
+                        openProducts(player, id);
+                        return;
                     }
                 }
+            }
 
-                ConfigurationSection ci =
-                    getConfig().getConfigurationSection("command-items");
+            if (slot == getConfig().getInt("menu.missions-slot", -1)) {
+                openMissions(player);
+            }
 
-                if(ci!=null) {
+        } else if ("products".equals(mode)) {
+            if (slot == 49) {
+                openShop(player);
+                return;
+            }
 
-                    for(String id:ci.getKeys(false)) {
+            String category = menuCategories.get(uuid);
 
-                        ConfigurationSection s =
-                            ci.getConfigurationSection(id);
+            if (category == null) return;
 
-                        if(s!=null && s.getInt("slot",-1)==slot) {
-                            runCommandItem(p,s);
-                            return;
-                        }
+            ConfigurationSection products =
+                    getConfig().getConfigurationSection("products." + category);
+
+            if (products == null) return;
+
+            int autoSlot = 0;
+
+            for (String id : products.getKeys(false)) {
+                ConfigurationSection product =
+                        products.getConfigurationSection(id);
+
+                if (product == null) continue;
+
+                int configuredSlot = product.getInt("slot", -1);
+
+                if (configuredSlot < 0) {
+                    while (autoSlot < 45 &&
+                            productsSlotOccupied(products, id, autoSlot)) {
+                        autoSlot++;
                     }
+                    configuredSlot = autoSlot++;
                 }
 
-                if(slot==getConfig().getInt("menu.missions-slot",-1)) {
-                    openMissions(p);
+                if (configuredSlot == slot) {
+                    purchase(player, product);
                     return;
                 }
             }
 
-        } else if(mode.equals("products")) {
+        } else if ("missions".equals(mode)) {
+            ConfigurationSection missions =
+                    getConfig().getConfigurationSection("missions.entries");
 
-            if(slot==49) {
-                openShop(p);
-                return;
+            if (missions == null) return;
+
+            int currentSlot = 0;
+
+            for (String id : missions.getKeys(false)) {
+                ConfigurationSection mission =
+                        missions.getConfigurationSection(id);
+
+                if (mission == null ||
+                        !mission.getBoolean("enabled", true)) {
+                    continue;
+                }
+
+                if (currentSlot++ == slot) {
+                    claimMission(player, id, mission);
+                    return;
+                }
             }
+        }
+    }
 
-            String cat = menuCategory.get(p.getUniqueId());
+    private boolean productsSlotOccupied(
+            ConfigurationSection products, String currentId, int slot) {
 
-            if(cat==null) return;
-
-            ConfigurationSection sec =
-                getConfig().getConfigurationSection("products."+cat);
-
-            if(sec==null) return;
-
-            Map<Integer,String> slots =
-                productSlots.get(p.getUniqueId());
-
-            if(slots==null) return;
-
-            String productId = slots.get(slot);
-
-            if(productId==null) return;
+        for (String id : products.getKeys(false)) {
+            if (id.equals(currentId)) break;
 
             ConfigurationSection product =
-                sec.getConfigurationSection(productId);
+                    products.getConfigurationSection(id);
 
-            if(product!=null) purchase(p,product);
+            if (product != null && product.getInt("slot", -1) == slot) {
+                return true;
+            }
+        }
 
-        } else if(mode.equals
+        return false;
+    }
+
+    private void purchase(Player player, ConfigurationSection product) {
+        double price = product.getDouble("price", 0);
+        double balance = getGold(player.getUniqueId());
+
+        List<String> commands = product.getStringList("commands");
+
+        if (!Double.isFinite(price) || price < 0 ||
+                balance < price || commands.isEmpty()) {
+            player.sendMessage(color(
+                    balance < price
+                            ? "&cNot enough " + currency() + "!"
+                            : "&cProduct is not configured."
+            ));
+            return;
+        }
+
+        setGold(player.getUniqueId(), balance - price);
+
+        for (String command : commands) {
+            Bukkit.dispatchCommand(
+                    Bukkit.getConsoleSender(),
+                    command.replace("{player}", player.getName())
+            );
+        }
+
+        player.sendMessage(color(
+                "&aPurchase successful! &6-" +
+                        format(price) + " " + currency()
+        ));
+
+        player.closeInventory();
+    }
+
+    private void claimMission(
+            Player player, String id, ConfigurationSection mission) {
+
+        String path = player.getUniqueId() + ".missions." + id;
+
+        int progress = playerData.getInt(path + ".progress", 0);
+        int target = Math.max(1, mission.getInt("target", 1));
+
+        boolean repeatable = mission.getBoolean("repeatable", false);
+        boolean claimed = playerData.getBoolean(path + ".claimed", false);
+
+        if (progress < target || (claimed && !repeatable)) {
+            player.sendMessage(color("&cMission is not ready."));
+            return;
+        }
+
+        double reward = mission.getDouble("reward", 0);
+
+        setGold(
+                player.getUniqueId(),
+                getGold(player.getUniqueId()) + reward
+        );
+
+        if (repeatable) {
+            playerData.set(path + ".progress", 0);
+            playerData.set(path + ".claimed", false);
+        } else {
+            playerData.set(path + ".claimed", true);
+        }
+
+        saveYaml(playerData, playerDataFile);
+
+        player.sendMessage(color(
+                "&aMission reward claimed: &6+" +
+                        format(reward) + " " + currency()
+        ));
+
+        openMissions(player);
+    }
+
+    private void help(CommandSender sender, boolean arabic) {
+        sender.sendMessage(color("&6&lGoldShop Help"));
+
+        String[] lines = arabic
+                ? new String[]{
+                "/gold - رصيدك",
+                "/gold give <player> <amount> - إعطاء ذهب",
+                "/gold take <player> <amount> - سحب ذهب",
+                "/gold set <player> <amount> - تحديد الرصيد",
+                "/gold rename <name> - تغيير اسم العملة",
+                "/goldshop - فتح المتجر",
+                "/goldmissions - فتح المهام",
+                "/goldshop reload - إعادة تحميل الإعدادات"
+        }
+                : new String[]{
+                "/gold - View your balance",
+                "/gold give <player> <amount> - Give Gold",
+                "/gold take <player> <amount> - Take Gold",
+                "/gold set <player> <amount> - Set balance",
+                "/gold rename <name> - Rename currency",
+                "/goldshop - Open shop",
+                "/goldmissions - Open missions",
+                "/goldshop reload - Reload configuration"
+        };
+
+        for (String line : lines) {
+            sender.sendMessage(color("&e» &f" + line));
+        }
+    }
+
+    @Override
+    public boolean onCommand(
+            CommandSender sender,
+            Command command,
+            String label,
+            String[] args) {
+
+        String name = command.getName().toLowerCase(Locale.ROOT);
+
+        if (name.equals("goldmissions")) {
+            if (sender instanceof Player player) {
+                openMissions(player);
+            } else {
+                sender.sendMess
